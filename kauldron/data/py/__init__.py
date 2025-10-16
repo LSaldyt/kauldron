@@ -36,8 +36,12 @@ from kauldron.data.transforms.base import ElementWiseTransform
 from kauldron.data.transforms.base import TreeFlattenWithPath
 from kauldron.data.py.transform_utils import SliceDataset
 # ====== Random transforms ======
+from kauldron.data.py.random_transforms import ElementWiseRandomTransform
+from kauldron.data.py.random_transforms import RandomCrop
+from kauldron.data.py.random_transforms import RandomFlipLeftRight
 # ====== Map transforms ======
 from kauldron.data.transforms.map_transforms import Cast
+from kauldron.data.transforms.map_transforms import CenterCrop
 from kauldron.data.transforms.map_transforms import Gather
 from kauldron.data.transforms.map_transforms import Rearrange
 from kauldron.data.transforms.map_transforms import Resize

@@ -23,6 +23,7 @@ import functools
 import types
 import typing
 from typing import Any, Generic, TypeVar
+import warnings
 
 from etils import epy
 import flax.struct
@@ -111,6 +112,10 @@ class State(abc.ABC, Generic[_MetricT]):
       A new `State` that accumulates the value from both `self` and `other`.
     """
     raise NotImplementedError("Abstract method.")
+
+  def finalize(self: _SelfT) -> _SelfT:
+    """Finalizes the metric state (e.g. convert data fields to np.ndarrays)."""
+    return self
 
   @abc.abstractmethod
   def compute(self) -> Any:
@@ -202,6 +207,12 @@ class CollectingState(State[_MetricT]):
   """
 
   def __post_init__(self):
+    warnings.warn(
+        "`CollectingState` is deprecated. Please use `AutoState` with "
+        "`concat_field()` instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     # Normalize array values to `tuple()`
     for k, val in self._accumulated_fields.items():
       if not isinstance(val, tuple):  # Normalize `array` to tuple
@@ -240,9 +251,11 @@ class CollectingState(State[_MetricT]):
     }
     return dataclasses.replace(self, **merged_fields)
 
-  # Return `_SeltT` so auto-complete work
+  # Return `_SelfT` so auto-complete works
   def compute(self: _SelfT) -> _SelfT:
     """Returns the concatenated values."""
+    # TODO(klausg): move this to finalize() like in the AutoState
+    #   Note: That would require changing the __post_init__ logic as well.
     return _CollectingStateOutput(  # pytype: disable=bad-return-type
         **{k: np.concatenate(v) for k, v in self._accumulated_fields.items()}  # pylint: disable=protected-access
     )

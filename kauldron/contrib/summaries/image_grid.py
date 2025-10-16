@@ -110,7 +110,15 @@ class ImageGrid(kd.metrics.Metric):
       for i, substate in enumerate(self.show_image_states):
         substates_merged.append(substate.merge(other.show_image_states[i]))
 
-      return type(self)(show_image_states=tuple(substates_merged))
+      return dataclasses.replace(
+          self, show_image_states=tuple(substates_merged)
+      )
+
+    def finalize(self) -> Self:
+      return dataclasses.replace(
+          self,
+          show_image_states=tuple(s.finalize() for s in self.show_image_states),
+      )
 
     @typechecked
     def compute(self) -> Float["1 H W 3"]:

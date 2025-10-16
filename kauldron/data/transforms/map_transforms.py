@@ -14,6 +14,7 @@
 
 """Map transforms."""
 
+from collections.abc import Iterable
 import dataclasses
 import typing
 from typing import Any
@@ -24,7 +25,7 @@ from etils import epy
 import flax.core
 import jax
 from kauldron.data.transforms import base
-from kauldron.typing import XArray, typechecked  # pylint: disable=g-multiple-import,g-importing-member
+from kauldron.typing import Shape, XArray, typechecked  # pylint: disable=g-multiple-import,g-importing-member
 import numpy as np
 
 with epy.lazy_imports():
@@ -129,16 +130,29 @@ class Gather(base.ElementWiseTransform):
 class Resize(base.ElementWiseTransform):
   """Resizes an image.
 
+  At most one of `size`, `min_size`, and `max_size` must be set.
+
   Attributes:
-    size: The new size of the image.
+    size: The new size of the image. If set, the image is rescaled so that the
+      new size matches `size`.
+    min_size: The minimum size of the image. If set, the image is rescaled so
+      that the smaller edge matches `min_size`.
+    max_size: The maximum size of the image. If set, the image is rescaled so
+      that the larger edge matches `max_size`.
     method: The resizing method. If `None`, uses `area` for float TF inputs,
       `bilinear` for float JAX inputs, and `nearest` for int inputs.
     antialias: Whether to use an anti-aliasing filter.
   """
 
-  size: tuple[int, int]
+  size: tuple[int, int] | None = None
+  min_size: int | None = None
+  max_size: int | None = None
   method: str | jax.image.ResizeMethod | tf.image.ResizeMethod | None = None
   antialias: bool = True
+
+  def __post_init__(self):
+    super().__post_init__()
+    self._validate_params()
 
   @typechecked
   def map_element(self, element: XArray["*b h w c"]) -> XArray["*b h2 w2 c"]:
@@ -152,6 +166,7 @@ class Resize(base.ElementWiseTransform):
     else:
       method = self.method
 
+    new_size = self._get_resize_shape(*Shape("h w"))
     if enp.lazy.is_tf(element):
       # Flatten the batch dimensions
       batch = tf.shape(element)[:-3]
@@ -159,7 +174,7 @@ class Resize(base.ElementWiseTransform):
 
       imgs = tf.image.resize(
           imgs,
-          self.size,
+          new_size,
           method=method,
           antialias=self.antialias,
       )
@@ -175,7 +190,7 @@ class Resize(base.ElementWiseTransform):
         )
 
       *batch, _, _, c = element.shape
-      size = (*batch, *self.size, c)
+      size = (*batch, *new_size, c)
       # Explicitly set device to avoid `Disallowed host-to-device transfer`
       # Uses default sharding.
       element = jax.device_put(element, jax.local_devices(backend="cpu")[0])
@@ -187,6 +202,72 @@ class Resize(base.ElementWiseTransform):
       )
     else:
       raise ValueError(f"Unsupported type: {type(element)}")
+
+  def _validate_params(self) -> None:
+    number_sizes_set = sum([
+        self.size is not None,
+        self.min_size is not None,
+        self.max_size is not None,
+    ])
+    if number_sizes_set != 1:
+      raise ValueError(
+          "Exactly one of `size`, `min_size`, and `max_size` must be set. "
+          f"Got {number_sizes_set} sizes set."
+      )
+
+  def _get_resize_shape(self, h: int, w: int) -> tuple[int, int]:
+    if self.size is not None:
+      return self.size
+    elif self.min_size is not None:
+      ratio = self.min_size / min(h, w)
+      return int(round(h * ratio)), int(round(w * ratio))
+    elif self.max_size is not None:
+      ratio = self.max_size / max(h, w)
+      return int(round(h * ratio)), int(round(w * ratio))
+    else:
+      raise ValueError("One of `size`, `min_size`, and `max_size` must be set.")
+
+
+@dataclasses.dataclass(kw_only=True, frozen=True, eq=True)
+class CenterCrop(base.ElementWiseTransform):
+  """Crop the input data to the specified shape from the center.
+
+  Can be used on data of any shape or type including images and videos. This
+  transform does NOT support dynamic shapes, i.e., shapes with -1 in any of
+  the dimensions.
+
+  Attributes:
+    shape: A tuple of integers describing the target shape of the crop. Entries
+      can be also be None to keep the original shape of the data in that dim.
+  """
+
+  shape: tuple[int | None, ...]
+
+  @typechecked
+  def map_element(self, element: XArray["..."]) -> XArray["..."]:
+    if len(element.shape) != len(self.shape):
+      raise ValueError(
+          "Rank of self.shape has to match element.shape. But got"
+          f" {self.shape=} and {element.shape=}"
+      )
+    target_shape = self._resolve_target_shape(element.shape, self.shape)
+    start = np.subtract(element.shape, target_shape) // 2
+    if enp.lazy.is_tf(element):
+      crop = tf.slice(element, start, target_shape)
+      return tf.ensure_shape(crop, target_shape)
+    elif enp.lazy.is_np(element) or enp.lazy.is_jax(element):
+      end = np.add(start, target_shape)
+      return jax.lax.slice(element, start, end)
+    else:
+      raise ValueError(f"Unsupported type: {type(element)}")
+
+  def _resolve_target_shape(
+      self, element_shape: Iterable[int], crop_shape: tuple[int | None, ...]
+  ) -> tuple[int, ...]:
+    final_shape = []
+    for e, c in zip(element_shape, crop_shape):
+      final_shape.append(c or e)
+    return tuple(final_shape)
 
 
 def _is_integer(dtype: Any) -> bool:

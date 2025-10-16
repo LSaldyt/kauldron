@@ -123,6 +123,7 @@ class Metric(abc.ABC):
       state = self.get_state_from_context(context)
     else:
       state = self.get_state(**kwargs)
+    state = state.finalize()
     return state.compute()
 
 
@@ -193,6 +194,13 @@ class TreeState(base_state.State):
         is_leaf=base_state.State.isinstance,
     )
     return type(self)(tree=merged_tree)
+
+  def finalize(self) -> TreeState:
+    """Finalizes the metric state (e.g. convert data fields to np.ndarrays)."""
+    finalized_tree = jax.tree.map(
+        lambda x: x.finalize(), self.tree, is_leaf=base_state.State.isinstance
+    )
+    return dataclasses.replace(self, tree=finalized_tree)
 
   def compute(self) -> PyTree[Any]:  # pytype: disable=signature-mismatch  # jnp-array
     """Calls compute for all metric states in tree."""
@@ -366,6 +374,11 @@ class SkipIfMissing(Metric):
         return self
 
       return type(self)(state=self.state.merge(other.state))
+
+    def finalize(self) -> SkipIfMissing.State:
+      if self.state is None:
+        return self
+      return dataclasses.replace(self, state=self.state.finalize())
 
     def compute(self) -> PyTree[Any]:
       return self.state.compute() if self.state is not None else {}
