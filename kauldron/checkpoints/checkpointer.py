@@ -207,9 +207,9 @@ class Checkpointer(BaseCheckpointer):
   multiprocessing_options: ocp.options.MultiprocessingOptions = (
       dataclasses.field(default_factory=ocp.options.MultiprocessingOptions)
   )
-
-  fast: bool = True
-  create: bool = True
+  create:    bool = True
+  fast:      bool = True
+  is_async:  bool = True
 
   @functools.cached_property
   def _ckpt_mgr(self) -> lazy_checkpoint_manager.LazyCheckpointManager:
@@ -234,6 +234,7 @@ class Checkpointer(BaseCheckpointer):
         async_options=ocp.AsyncOptions(
             timeout_secs=60 * 30,  # 30 minutes
         ),
+        enable_async_checkpointing=self.is_async, # I mean sure, it's faster, but if it's just directly broken why isn't there an option to turn it off for testing
         multiprocessing_options=self.multiprocessing_options,
         # Ensure that checkpoints are not world-readable.
         # This file mode removes permission bits for OTHER in the POSIX format.
